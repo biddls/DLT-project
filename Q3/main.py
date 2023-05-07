@@ -1,3 +1,4 @@
+import time
 import cv2
 import numpy as np
 
@@ -5,6 +6,41 @@ if __name__ == "__main__":
     # remove unnecessary imports if run externally
     import timeit
     from matplotlib import pyplot as plt
+    from tqdm import tqdm
+
+
+def filter2D(image, kernel):
+    """
+    Applies a 2D convolution filter to the input image using the provided kernel.
+
+    Args:
+        image: numpy.ndarray - Input image to apply the filter on.
+        kernel: numpy.ndarray - 2D kernel filter to be applied on the image.
+
+    Returns:
+        output: numpy.ndarray - Filtered image after applying the kernel.
+    """
+    # Get the dimensions of the input image and the kernel.
+    image_height, image_width = image.shape
+    kernel_height, kernel_width = kernel.shape
+
+    # Pad the input image to ensure that the output image is the same size as the input.
+    pad_height = int(kernel_height / 2)
+    pad_width = int(kernel_width / 2)
+    padded_image = np.pad(image, ((pad_height, pad_height), (pad_width, pad_width)), 'constant')
+
+    # Initialize the output image.
+    output = np.zeros((image_height, image_width), dtype=np.float64)
+
+    # Perform the 2D convolution on the padded image using the kernel.
+    for i in range(pad_height, image_height + pad_height):
+        for j in range(pad_width, image_width + pad_width):
+            region = padded_image[i - pad_height:i + pad_height + 1, j - pad_width:j + pad_width + 1]
+            output[i - pad_height, j - pad_width] = np.sum(np.multiply(region, kernel))
+
+    np.clip(output, 0, 255, out=output)
+
+    return output.astype(np.uint8)
 
 
 def smooth_and_detect_edges(
@@ -37,20 +73,23 @@ def smooth_and_detect_edges(
     """
 
     # Read input image and convert to grayscale
-    img = cv2.imread(image_filename)
-    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _img = cv2.imread(image_filename)
+    gray_img = cv2.cvtColor(_img, cv2.COLOR_BGR2GRAY)
 
     # Create filter kernel and apply it
     if filter_type == "gaussian":
         if std_dev is None:
             std_dev = 1.5 * filter_width
         kernel = cv2.getGaussianKernel(filter_width, std_dev)
-        smoothed_img = cv2.filter2D(gray_img, -1, kernel)
+        smoothed_img = filter2D(gray_img, kernel)
+
     elif filter_type == "median":
         smoothed_img = cv2.medianBlur(gray_img, filter_width)
+
     elif filter_type == "mean":
-        kernel = np.ones((filter_width, filter_width), np.float32) / (filter_width * filter_width)
-        smoothed_img = cv2.filter2D(gray_img, -1, kernel)
+        kernel = np.ones((filter_width, filter_width), np.float32) / (filter_width ** 2)
+        smoothed_img = filter2D(gray_img, kernel)
+
     else:
         raise ValueError(f"Unknown filter type: {filter_type}")
 
@@ -59,8 +98,9 @@ def smooth_and_detect_edges(
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
 
     # Apply sobel filter
-    grad_x = cv2.filter2D(smoothed_img, -1, sobel_x)
-    grad_y = cv2.filter2D(smoothed_img, -1, sobel_y)
+    grad_x = filter2D(smoothed_img, sobel_x)
+    grad_y = filter2D(smoothed_img, sobel_y)
+
     grad_mag = cv2.addWeighted(grad_x, 0.5, grad_y, 0.5, 0)
 
     # Set default values for hysteresis thresholding
@@ -71,7 +111,7 @@ def smooth_and_detect_edges(
     edges = cv2.inRange(grad_mag, t1, th)
 
     # Display results
-    return edges, img
+    return edges, _img
 
 
 if __name__ == "__main__":
@@ -88,10 +128,13 @@ if __name__ == "__main__":
     plt.show()
 
     # performance testing
-    runs = 100
-    run_time = timeit.timeit(stmt=lambda: smooth_and_detect_edges("lena_bw.png", 3, "gaussian"), number=runs)
-    print(f"Finished my smooth_and_detect_edges in {run_time/runs:.4f} secs on average")
+    print("\tPerformance testing")
+    runs = 10
+    start = time.time()
+    for _ in tqdm(range(runs), desc="Benchmarking smooth_and_detect_edges"):
+        smooth_and_detect_edges("lena_bw.png", 3, "gaussian")
+    print(f"Finished my smooth_and_detect_edges in\n\t{(time.time() - start) / runs:.4f} secs on average")
 
-    run_time = timeit.timeit(stmt=lambda: cv2.Canny(cv2.imread("lena_bw.png", cv2.IMREAD_GRAYSCALE), 100, 200), number=runs)
-    print(f"Finished CV2 canny in {run_time/runs:.4f} secs on average")
-
+    run_time = timeit.timeit(stmt=lambda: cv2.Canny(cv2.imread("lena_bw.png", cv2.IMREAD_GRAYSCALE), 100, 200),
+                             number=runs)
+    print(f"Finished CV2 canny in\n\t{run_time / runs:.4f} seconds on average")
